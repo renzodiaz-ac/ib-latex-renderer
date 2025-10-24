@@ -11,40 +11,52 @@ def compile_tex():
         diagram = data.get("diagram", "")
         topic = data.get("metadata", {}).get("topic", "IB Exercise")
 
-        latex = fr"""
-\documentclass[12pt]{{article}}
-\usepackage[a5paper,landscape,left=1.2cm,right=1.2cm,top=0.5cm,bottom=0.8cm]{{geometry}}
-\usepackage{{xcolor,amsmath,amssymb,tcolorbox,lmodern,tikz,pgfplots}}
-\pgfplotsset{{compat=1.18}}
-\definecolor{{IBNavy}}{{HTML}}{{0B1B35}}
-\pagestyle{{empty}}
+        # Prepara el bloque del diagrama fuera del string
+        diagram_block = ""
+        if diagram and "\\begin{tikzpicture}" in diagram:
+            diagram_block = diagram
 
-\begin{{document}}
-\begin{{tcolorbox}}[colback=white,colframe=IBNavy,title=IB Math AI SL -- {topic},fonttitle=\bfseries]
-{question}
-\end{{tcolorbox}}
+        # Construir el documento LaTeX
+        latex = (
+            r"\documentclass[12pt]{article}" +
+            r"\usepackage[a5paper,landscape,left=1.2cm,right=1.2cm,top=0.5cm,bottom=0.8cm]{geometry}" +
+            r"\usepackage{xcolor,amsmath,amssymb,tcolorbox,lmodern,tikz,pgfplots}" +
+            r"\pgfplotsset{compat=1.18}" +
+            r"\definecolor{IBNavy}{HTML}{0B1B35}" +
+            r"\pagestyle{empty}" +
+            r"\begin{document}" +
+            r"\begin{tcolorbox}[colback=white,colframe=IBNavy," +
+            "title=IB Math AI SL -- " + topic + ",fonttitle=\\bfseries]" +
+            question +
+            r"\end{tcolorbox}" +
+            diagram_block +
+            r"\end{document}"
+        )
 
-{diagram if "\\begin{tikzpicture}" in diagram else ""}
-\end{{document}}
-"""
-
+        # Crear archivo temporal y compilar LaTeX
         with tempfile.TemporaryDirectory() as tmp:
             tex_path = os.path.join(tmp, "doc.tex")
             pdf_path = os.path.join(tmp, "doc.pdf")
+
             with open(tex_path, "w", encoding="utf-8") as f:
                 f.write(latex)
 
             subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", tex_path],
-                cwd=tmp, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                cwd=tmp,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
             )
 
             with open(pdf_path, "rb") as f:
                 pdf_b64 = base64.b64encode(f.read()).decode()
 
         return jsonify({"pdf_base64": pdf_b64})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
