@@ -18,20 +18,22 @@ def compile_tex():
 
         # Construir el documento LaTeX
         latex = (
-            r"\documentclass[12pt]{article}" +
-            r"\usepackage[a5paper,landscape,left=1.2cm,right=1.2cm,top=0.5cm,bottom=0.8cm]{geometry}" +
-            r"\usepackage{xcolor,amsmath,amssymb,tcolorbox,lmodern,tikz,pgfplots}" +
-            r"\pgfplotsset{compat=1.18}" +
-            r"\definecolor{IBNavy}{HTML}{0B1B35}" +
-            r"\pagestyle{empty}" +
-            r"\begin{document}" +
-            r"\begin{tcolorbox}[colback=white,colframe=IBNavy," +
-            "title=IB Math AI SL -- " + topic + ",fonttitle=\\bfseries]" +
-            question +
-            r"\end{tcolorbox}" +
-            diagram_block +
-            r"\end{document}"
-        )
+    r"\documentclass[12pt]{article}" + "\n" +
+    r"\usepackage[a5paper,landscape,left=1.2cm,right=1.2cm,top=0.5cm,bottom=0.8cm]{geometry}" + "\n" +
+    r"\usepackage[T1]{fontenc}" + "\n" +
+    r"\usepackage{xcolor,amsmath,amssymb,tcolorbox,lmodern,tikz,pgfplots}" + "\n" +
+    r"\pgfplotsset{compat=1.18}" + "\n" +
+    r"\definecolor{IBNavy}{HTML}{0B1B35}" + "\n" +
+    r"\pagestyle{empty}" + "\n\n" +
+    r"\begin{document}" + "\n" +
+    r"\begin{tcolorbox}[colback=white,colframe=IBNavy," +
+    "title=IB Math AI SL -- " + topic + ",fonttitle=\\bfseries]" + "\n" +
+    question + "\n" +
+    r"\end{tcolorbox}" + "\n\n" +
+    diagram_block + "\n" +
+    r"\end{document}"
+)
+
 
         # Crear archivo temporal y compilar LaTeX
         with tempfile.TemporaryDirectory() as tmp:
