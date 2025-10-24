@@ -1,6 +1,7 @@
-FROM python:3.11-slim
+# ---------- BASE ----------
+FROM python:3.10-slim
 
-# Instalar dependencias mínimas de LaTeX
+# ---------- DEPENDENCIAS DEL SISTEMA ----------
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     texlive-latex-base \
@@ -10,15 +11,17 @@ RUN apt-get update && \
     texlive-fonts-extra \
     texlive-pictures \
     texlive-science \
+    poppler-utils \
     ghostscript \
-    lmodern && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    lmodern \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Instalar Flask
+# ---------- DEPENDENCIAS DE PYTHON ----------
 RUN pip install flask
 
+# ---------- COPIAR ARCHIVOS ----------
 WORKDIR /app
-COPY app.py /app
+COPY app.py /app/app.py
 
-EXPOSE 8080
+# ---------- EJECUTAR SERVIDOR ----------
 CMD ["python", "app.py"]

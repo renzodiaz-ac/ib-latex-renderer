@@ -1,8 +1,11 @@
 from flask import Flask, request, jsonify
-import tempfile, subprocess, os, base64, json
+import tempfile, subprocess, os, base64
 
 app = Flask(__name__)
 
+# ============================================================
+# 1️⃣ COMPILAR LATEX A PDF
+# ============================================================
 @app.route("/compile", methods=["POST"])
 def compile_tex():
     try:
@@ -11,12 +14,10 @@ def compile_tex():
         diagram = data.get("diagram", "")
         topic = data.get("metadata", {}).get("topic", "IB Exercise")
 
-        # Prepara el bloque del diagrama fuera del string
         diagram_block = ""
         if diagram and "\\begin{tikzpicture}" in diagram:
             diagram_block = diagram
 
-        # Construir el documento LaTeX
         latex = (
             r"\documentclass[12pt]{article}" + "\n" +
             r"\usepackage[a5paper,landscape,left=1.2cm,right=1.2cm,top=0.5cm,bottom=0.8cm]{geometry}" + "\n" +
@@ -34,7 +35,6 @@ def compile_tex():
             r"\end{document}"
         )
 
-        # Crear archivo temporal y compilar LaTeX
         with tempfile.TemporaryDirectory() as tmp:
             tex_path = os.path.join(tmp, "doc.tex")
             pdf_path = os.path.join(tmp, "doc.pdf")
@@ -42,7 +42,6 @@ def compile_tex():
             with open(tex_path, "w", encoding="utf-8") as f:
                 f.write(latex)
 
-            # Ejecutar pdflatex y capturar logs
             result = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", tex_path],
                 cwd=tmp,
@@ -68,5 +67,38 @@ def compile_tex():
         return jsonify({"error": str(e)}), 500
 
 
+# ============================================================
+# 2️⃣ CONVERTIR PDF A PNG
+# ============================================================
+@app.route("/pdf-to-png", methods=["POST"])
+def pdf_to_png():
+    try:
+        data = request.get_json(force=True)
+        pdf_b64 = data.get("pdf_base64", "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = os.path.join(tmp, "input.pdf")
+            png_path = os.path.join(tmp, "page")
+
+            with open(pdf_path, "wb") as f:
+                f.write(base64.b64decode(pdf_b64))
+
+            subprocess.run(
+                ["pdftoppm", "-png", "-singlefile", "-r", "300", pdf_path, png_path],
+                check=True
+            )
+
+            with open(png_path + ".png", "rb") as f:
+                png_b64 = base64.b64encode(f.read()).decode()
+
+        return jsonify({"png_base64": png_b64})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+# SERVIDOR
+# ============================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
