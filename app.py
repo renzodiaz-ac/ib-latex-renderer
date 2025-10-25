@@ -4,17 +4,14 @@ import tempfile, subprocess, os, base64, re
 app = Flask(__name__)
 
 # ============================================================
-# 🧩 UTILIDADES DE SANITIZACIÓN
+# 🧩 SANITIZACIÓN Y HELPERS
 # ============================================================
 
 def safe_str(x, default=""):
-    """Convierte cualquier entrada en string seguro."""
-    if x is None:
-        return default
-    return str(x)
+    return default if x is None else str(x)
 
 def replace_unsafe_chars(s: str) -> str:
-    """Limpia caracteres Unicode o ilegales que pueden romper LaTeX."""
+    """Limpia caracteres Unicode problemáticos."""
     if not s:
         return ""
     replacements = {
@@ -25,20 +22,26 @@ def replace_unsafe_chars(s: str) -> str:
         s = s.replace(k, v)
     return s
 
-def build_diagram_block(diagram_raw: str) -> str:
-    """Escala automáticamente TikZ al ancho A5 horizontal y evita anidamientos."""
+def clean_tikz_block(diagram_raw: str) -> str:
+    """Limpia duplicados center y asegura estructura válida TikZ."""
     if not diagram_raw:
         return ""
-    s = safe_str(diagram_raw, "").strip()
+    s = safe_str(diagram_raw).strip()
     if "\\begin{tikzpicture}" not in s:
         return ""
-    if "\\end{tikzpicture}" not in s:
+    # Remueve center anidados y comentarios finales dañinos
+    s = re.sub(r"\\begin\{center\}", "", s)
+    s = re.sub(r"\\end\{center\}", "", s)
+    s = s.strip()
+    if not s.endswith("\\end{tikzpicture}"):
         s += "\n\\end{tikzpicture}"
-    # Si tiene center, limpiar
-    if "\\begin{center}" in s:
-        s = s.replace("\\begin{center}", "").replace("\\end{center}", "")
-    return "\n\\begin{center}\\resizebox{0.95\\linewidth}{!}{%\n" + s + "\n}%\n\\end{center}\n"
-
+    # Asegura un cierre limpio y escalado seguro
+    return (
+        "\n\\begin{center}\n"
+        "\\resizebox{0.95\\linewidth}{!}{%\n"
+        f"{s}\n"
+        "}%\n\\end{center}\n"
+    )
 
 # ============================================================
 # 🧱 ENDPOINT: COMPILAR LATEX → PDF
@@ -54,7 +57,7 @@ def compile_tex():
         meta     = data.get("metadata") or {}
         topic    = replace_unsafe_chars(safe_str(meta.get("topic"), "IB Exercise").strip())
 
-        diagram_block = build_diagram_block(diagram)
+        diagram_block = clean_tikz_block(diagram)
 
         latex = (
             r"\documentclass[12pt]{article}" + "\n"
@@ -95,7 +98,7 @@ def compile_tex():
                 log_file = os.path.join(tmp, "doc.log")
                 if os.path.exists(log_file):
                     with open(log_file, "r", encoding="utf-8", errors="ignore") as log:
-                        latex_log = log.read()[:10000]
+                        latex_log = log.read()[:15000]
                     return jsonify({"error": "LaTeX compilation failed", "log": latex_log}), 500
                 return jsonify({"error": "pdflatex failed", "details": result.stderr.decode(errors='ignore')}), 500
 
@@ -106,7 +109,6 @@ def compile_tex():
 
     except Exception as e:
         return jsonify({"error": safe_str(e)}), 500
-
 
 # ============================================================
 # 🖼️ ENDPOINT: CONVERTIR PDF → PNG
@@ -142,7 +144,6 @@ def pdf_to_png():
         return jsonify({"error": "pdftoppm failed", "details": safe_str(e)}), 500
     except Exception as e:
         return jsonify({"error": safe_str(e)}), 500
-
 
 # ============================================================
 # 🚀 SERVIDOR
