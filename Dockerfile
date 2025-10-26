@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Instala solo lo necesario para LaTeX con TikZ + PDF to PNG
+# Instala paquetes necesarios para LaTeX + TikZ + fuentes modernas
 RUN apt-get update && apt-get install -y \
     texlive-latex-base \
     texlive-latex-recommended \
@@ -8,16 +8,21 @@ RUN apt-get update && apt-get install -y \
     texlive-fonts-recommended \
     texlive-science \
     texlive-pictures \
+    lmodern \
     poppler-utils \
     ghostscript \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Actualiza índice de TeX (necesario para encontrar lmodern.sty)
+RUN mktexlsr
+
+# Trabajo en /app
 WORKDIR /app
 COPY . .
 
 # Instala Flask
-RUN python3 -m pip install --no-cache-dir flask
+RUN pip install --no-cache-dir flask
 
-# Puerto y ejecución
+# Puerto y comando final
 EXPOSE 8080
 CMD ["python3", "app.py"]
