@@ -3,45 +3,26 @@ import tempfile, subprocess, os, base64
 
 app = Flask(__name__)
 
-# ============================================================
-# 1️⃣ COMPILAR LATEX A PDF
-# ============================================================
+
 @app.route("/compile", methods=["POST"])
 def compile_tex():
     try:
         data = request.get_json(force=True)
-        question = data.get("question", "")
-        diagram = data.get("diagram", "")
-        topic = data.get("metadata", {}).get("topic", "IB Exercise")
+        latex_b64 = data.get("latex_base64", "")
 
-        diagram_block = ""
-        if diagram and "\\begin{tikzpicture}" in diagram:
-            diagram_block = diagram
-
-        latex = (
-            r"\documentclass[12pt]{article}" + "\n" +
-            r"\usepackage[a5paper,landscape,left=1.2cm,right=1.2cm,top=0.5cm,bottom=0.8cm]{geometry}" + "\n" +
-            r"\usepackage[T1]{fontenc}" + "\n" +
-            r"\usepackage{xcolor,amsmath,amssymb,tcolorbox,lmodern,tikz,pgfplots}" + "\n" +
-            r"\pgfplotsset{compat=1.18}" + "\n" +
-            r"\definecolor{IBNavy}{HTML}{0B1B35}" + "\n" +
-            r"\pagestyle{empty}" + "\n\n" +
-            r"\begin{document}" + "\n" +
-            r"\begin{tcolorbox}[colback=white,colframe=IBNavy," +
-            "title=IB Math AI SL -- " + topic + ",fonttitle=\\bfseries]" + "\n" +
-            question + "\n" +
-            r"\end{tcolorbox}" + "\n\n" +
-            diagram_block + "\n" +
-            r"\end{document}"
-        )
+        if not latex_b64:
+            return jsonify({"error": "Missing 'latex_base64' in request."}), 400
 
         with tempfile.TemporaryDirectory() as tmp:
             tex_path = os.path.join(tmp, "doc.tex")
             pdf_path = os.path.join(tmp, "doc.pdf")
+            png_path = os.path.join(tmp, "doc")  # pdftoppm output prefix
 
-            with open(tex_path, "w", encoding="utf-8") as f:
-                f.write(latex)
+            # 🔽 Escribe .tex a partir de base64
+            with open(tex_path, "wb") as f:
+                f.write(base64.b64decode(latex_b64))
 
+            # 🔄 Compilar LaTeX a PDF
             result = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", tex_path],
                 cwd=tmp,
@@ -58,47 +39,28 @@ def compile_tex():
                 else:
                     return jsonify({"error": "pdflatex failed", "details": result.stderr.decode()}), 500
 
+            # ✅ PDF a base64
             with open(pdf_path, "rb") as f:
                 pdf_b64 = base64.b64encode(f.read()).decode()
 
-        return jsonify({"pdf_base64": pdf_b64})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ============================================================
-# 2️⃣ CONVERTIR PDF A PNG
-# ============================================================
-@app.route("/pdf-to-png", methods=["POST"])
-def pdf_to_png():
-    try:
-        data = request.get_json(force=True)
-        pdf_b64 = data.get("pdf_base64", "")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            pdf_path = os.path.join(tmp, "input.pdf")
-            png_path = os.path.join(tmp, "page")
-
-            with open(pdf_path, "wb") as f:
-                f.write(base64.b64decode(pdf_b64))
-
+            # 🔄 Convertir PDF a PNG (300 dpi, A4 aprox)
             subprocess.run(
                 ["pdftoppm", "-png", "-singlefile", "-r", "300", pdf_path, png_path],
                 check=True
             )
 
+            # ✅ PNG a base64
             with open(png_path + ".png", "rb") as f:
                 png_b64 = base64.b64encode(f.read()).decode()
 
-        return jsonify({"png_base64": png_b64})
+            # ✅ Devuelve ambos correctamente
+            return jsonify({
+                "pdf_base64": pdf_b64,
+                "png_base64": png_b64
+            })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# ============================================================
-# SERVIDOR
-# ============================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)

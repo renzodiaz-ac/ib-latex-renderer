@@ -1,27 +1,23 @@
-# ---------- BASE ----------
 FROM python:3.10-slim
 
-# ---------- DEPENDENCIAS DEL SISTEMA ----------
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Instala solo lo necesario para LaTeX con TikZ + PDF to PNG
+RUN apt-get update && apt-get install -y \
     texlive-latex-base \
     texlive-latex-recommended \
     texlive-latex-extra \
     texlive-fonts-recommended \
-    texlive-fonts-extra \
-    texlive-pictures \
     texlive-science \
+    texlive-pictures \
     poppler-utils \
     ghostscript \
-    lmodern \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ---------- DEPENDENCIAS DE PYTHON ----------
-RUN pip install flask
-
-# ---------- COPIAR ARCHIVOS ----------
 WORKDIR /app
-COPY app.py /app/app.py
+COPY . .
 
-# ---------- EJECUTAR SERVIDOR ----------
-CMD ["python", "app.py"]
+# Instala Flask
+RUN python3 -m pip install --no-cache-dir flask
+
+# Puerto y ejecución
+EXPOSE 8080
+CMD ["python3", "app.py"]
