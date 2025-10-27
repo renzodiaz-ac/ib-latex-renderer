@@ -1,6 +1,8 @@
 FROM python:3.10-slim
 
-# Instala paquetes necesarios para LaTeX + TikZ + fuentes modernas
+# =====================================================
+# 🔧 Instalación de dependencias del sistema
+# =====================================================
 RUN apt-get update && apt-get install -y \
     texlive-latex-base \
     texlive-latex-recommended \
@@ -13,16 +15,26 @@ RUN apt-get update && apt-get install -y \
     ghostscript \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Actualiza índice de TeX (necesario para encontrar lmodern.sty)
+# Actualiza el índice de TeX (necesario para detectar nuevos paquetes)
 RUN mktexlsr
 
-# Trabajo en /app
+# =====================================================
+# 📁 Configuración del entorno
+# =====================================================
 WORKDIR /app
 COPY . .
 
-# Instala Flask
-RUN pip install --no-cache-dir flask
+# Instala dependencias de Python
+RUN pip install --no-cache-dir flask gunicorn
 
-# Puerto y comando final
+# Crea carpeta para archivos estáticos públicos
+RUN mkdir -p static
+
+# =====================================================
+# 🚀 Configuración del servidor
+# =====================================================
+# Render usa gunicorn por defecto; es más estable que python app.py
+#  - workers=2 permite compilar múltiples requests simultáneamente
+#  - threads=4 mejora la concurrencia I/O para Make y Softr
 EXPOSE 8080
-CMD ["python3", "app.py"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4"]
