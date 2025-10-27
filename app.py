@@ -1,12 +1,8 @@
 from flask import Flask, request, jsonify
-import tempfile, subprocess, os, base64
+import tempfile, subprocess, os, base64, uuid, time, glob
 
 app = Flask(__name__)
 
-
-# ==========================================================
-#  🔹 ENDPOINT 1 – Compile LaTeX to PDF & PNG + Public URL
-# ==========================================================
 @app.route("/compile", methods=["POST"])
 def compile_tex():
     try:
@@ -25,7 +21,7 @@ def compile_tex():
             with open(tex_path, "wb") as f:
                 f.write(base64.b64decode(latex_b64))
 
-            # 🧩 Compile LaTeX to PDF
+            # 🧩 Compile LaTeX → PDF
             result = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", tex_path],
                 cwd=tmp,
@@ -42,7 +38,7 @@ def compile_tex():
                 else:
                     return jsonify({"error": "pdflatex failed", "details": result.stderr.decode()}), 500
 
-            # ✅ Convert PDF to PNG (300 dpi)
+            # ✅ Convert PDF → PNG (300 dpi)
             subprocess.run(
                 ["pdftoppm", "-png", "-singlefile", "-r", "300", pdf_path, png_path],
                 check=True
@@ -55,10 +51,25 @@ def compile_tex():
             with open(png_path + ".png", "rb") as f:
                 png_b64 = base64.b64encode(f.read()).decode()
 
+            # ============================================================
             # 🧱 Save PNG persistently to /static/ for public access
+            # ============================================================
             os.makedirs("static", exist_ok=True)
-            output_filename = "exercise.png"
+
+            # 🧹 Clean old files (>1 hour)
+            for f in glob.glob("static/exercise_*.png"):
+                try:
+                    if time.time() - os.path.getmtime(f) > 3600:  # 1 hour
+                        os.remove(f)
+                except Exception:
+                    pass
+
+            # 🆕 Unique filename per exercise
+            unique_id = uuid.uuid4().hex[:8]
+            output_filename = f"exercise_{unique_id}.png"
             output_path = os.path.join("static", output_filename)
+
+            # Save PNG
             with open(output_path, "wb") as f:
                 f.write(base64.b64decode(png_b64))
 
