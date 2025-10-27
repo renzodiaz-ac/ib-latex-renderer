@@ -10,10 +10,10 @@ RUN apt-get update && apt-get install -y \
     texlive-fonts-recommended \
     texlive-science \
     texlive-pictures \
-    lmodern \
     poppler-utils \
     ghostscript \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 
 # Actualiza el índice de TeX (necesario para detectar nuevos paquetes)
 RUN mktexlsr
