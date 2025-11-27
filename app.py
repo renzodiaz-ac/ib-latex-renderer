@@ -125,3 +125,59 @@ def upload():
 # ==========================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
+
+
+
+
+#extra code por vector integration with excalidraw
+
+from pydantic import BaseModel
+from typing import List
+
+class Stroke(BaseModel):
+    id: str
+    points: List[List[float]]
+    strokeWidth: float = None
+    strokeColor: str = None
+    groupIds: List[str] = []
+    frameId: str = None
+    seed: int = None
+
+class ParseRequest(BaseModel):
+    elements: List[Stroke]
+
+class Symbol(BaseModel):
+    id: str
+    bbox: List[float]
+    points: List[List[float]]
+
+class ParseResponse(BaseModel):
+    count: int
+    symbols: List[Symbol]
+
+def compute_bbox(points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+@app.post("/parse_strokes", response_model=ParseResponse)
+def parse_strokes(req: ParseRequest):
+    symbols = []
+
+    for el in req.elements:
+        if not el.points:
+            continue
+
+        bbox = compute_bbox(el.points)
+
+        symbols.append(Symbol(
+            id=el.id,
+            bbox=bbox,
+            points=el.points
+        ))
+
+    return ParseResponse(
+        count=len(symbols),
+        symbols=symbols
+    )
