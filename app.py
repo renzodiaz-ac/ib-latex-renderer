@@ -35,25 +35,40 @@ def compute_bbox(points):
     ys = [p[1] for p in points]
     return [min(xs), min(ys), max(xs), max(ys)]
 
-@app.route("/parse_strokes", methods=["POST"])
-def parse_strokes():
+@app.post("/parse_strokes")
+def parse_strokes_endpoint():
     try:
-        raw = request.get_json(force=True)
-        req = ParseRequest(**raw)
+        payload = request.get_json(force=True)
+
+        # If Make sends a list, unwrap it
+        if isinstance(payload, list):
+            if len(payload) == 0:
+                return jsonify({"error": "Empty list received"}), 400
+            payload = payload[0]
+
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Invalid JSON format"}), 400
+
+        # Pydantic validation
+        req = ParseRequest(**payload)
 
         symbols = []
         for el in req.elements:
             if not el.points:
                 continue
+
             bbox = compute_bbox(el.points)
-            symbols.append(Symbol(id=el.id, bbox=bbox, points=el.points))
 
-        response = ParseResponse(
-            count=len(symbols),
-            symbols=symbols
-        )
+            symbols.append(Symbol(
+                id=el.id,
+                bbox=bbox,
+                points=el.points
+            ))
 
-        return jsonify(response.dict())
+        return jsonify({
+            "count": len(symbols),
+            "symbols": [s.dict() for s in symbols]
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
