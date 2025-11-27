@@ -1,0 +1,33 @@
+\documentclass[tikz, border=5mm]{standalone}
+\usepackage{amsmath}
+\usepackage{lmodern}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, calc}
+
+\begin{document}
+\begin{tikzpicture}[scale=0.08]
+  % Draw the triangle
+  \coordinate (A) at (0,0);
+  \coordinate (B) at ($(A)+(45:60)$);  % 60 km at 045°
+  \coordinate (C) at ($(B)+(120:80)$); % 80 km at 120° from B
+
+  % Draw triangle
+  \draw[thick] (A) -- (B) -- (C) -- cycle;
+
+  % Mark points
+  \fill (A) circle (2pt) node[below left] {$A$};
+  \fill (B) circle (2pt) node[above right] {$B$};
+  \fill (C) circle (2pt) node[below right] {$C$};
+
+  % Optional: Add directions
+  \draw[dashed] (A) -- ++(90:100) node[above] {North};
+
+  % Add bearings
+  \draw[dashed, gray] (A) -- ++(0:30); % East reference
+  \draw[dashed, gray] (B) -- ++(0:30); % East from B
+
+  % Label distances
+  \path (A) -- (B) node[midway, above left] {60 km};
+  \path (B) -- (C) node[midway, above right] {80 km};
+\end{tikzpicture}
+\end{document}

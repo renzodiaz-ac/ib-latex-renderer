@@ -8,7 +8,8 @@ RUN apt-get update && \
 
 WORKDIR /app
 COPY . /app
-RUN pip install flask
+
+RUN pip install flask pydantic==1.10.13
 
 EXPOSE 8080
 CMD ["python", "app.py"]
