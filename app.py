@@ -179,6 +179,60 @@ def upload():
 
 
 # ==========================================================
+# 5. RAG: Retrieve Past Paper Examples
+# ==========================================================
+from openai import OpenAI
+import chromadb
+
+client = OpenAI()
+
+# Load persistent vector DB
+chroma_client = chromadb.PersistentClient(path="ib_store")
+collection = chroma_client.get_collection("ib_questions")
+
+@app.route("/retrieve", methods=["POST"])
+def retrieve():
+    try:
+        data = request.get_json(force=True)
+        topic = data.get("topic")
+        archetype_description = data.get("archetype_description")
+        k = data.get("k", 3)
+
+        if not topic or not archetype_description:
+            return jsonify({"error": "Missing topic or archetype_description"}), 400
+
+        query_text = f"Topic: {topic}\nSkill: {archetype_description}"
+
+        # Create embedding
+        emb = client.embeddings.create(
+            model="text-embedding-3-large",
+            input=query_text
+        ).data[0].embedding
+
+        # Query vector store
+        results = collection.query(
+            query_embeddings=[emb],
+            n_results=k,
+            where={"topic": topic}
+        )
+
+        out = []
+        for doc, qid in zip(results["documents"][0], results["ids"][0]):
+            out.append({
+                "id": qid,
+                "text": doc
+            })
+
+        return jsonify({"examples": out})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+
+
+# ==========================================================
 # 4. START SERVER
 # ==========================================================
 if __name__ == "__main__":
