@@ -185,7 +185,11 @@ from openai import OpenAI
 from chromadb import Client
 from chromadb.config import Settings
 
-client = OpenAI()
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
 
 # Init ChromaDB with safe production settings
 chroma_client = Client(Settings(
