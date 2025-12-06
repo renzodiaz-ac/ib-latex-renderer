@@ -183,32 +183,42 @@ def retrieve():
     try:
         data = request.get_json(force=True)
         topic = data.get("topic")
-        archetype = data.get("archetype_description")
+        archetype_description = data.get("archetype_description")
         k = int(data.get("k", 3))
 
-        if not topic or not archetype:
+        if not topic or not archetype_description:
             return jsonify({"error": "Missing topic or archetype_description"}), 400
 
-        query_text = f"Topic: {topic}\nSkill: {archetype}"
+        # Create semantic query
+        query_text = f"Topic: {topic}\nSkill: {archetype_description}"
 
+        # Create embedding
         emb = client.embeddings.create(
             model="text-embedding-3-large",
             input=query_text
         ).data[0].embedding
 
+        # ❗️SEMANTIC SEARCH ONLY – NO EXACT MATCH FILTER
         results = collection.query(
             query_embeddings=[emb],
-            n_results=k,
-            where={"topic": topic}
+            n_results=k
         )
 
-        docs = results.get("documents", [[]])[0]
+        documents = results.get("documents", [[]])[0]
         ids = results.get("ids", [[]])[0]
 
-        return jsonify({"examples": [{"id": i, "text": d} for i, d in zip(ids, docs)]})
+        out = []
+        for doc, qid in zip(documents, ids):
+            out.append({
+                "id": qid,
+                "text": doc
+            })
+
+        return jsonify({"examples": out})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 # ==========================================================
