@@ -8,7 +8,6 @@ app = Flask(__name__)
 # ==========================================================
 # 1. VECTOR PARSER (Strokes → Geometry)
 # ==========================================================
-
 class Stroke(BaseModel):
     id: str
     points: List[List[float]]
@@ -26,10 +25,6 @@ class Symbol(BaseModel):
     bbox: List[float]
     points: List[List[float]]
 
-class ParseResponse(BaseModel):
-    count: int
-    symbols: List[Symbol]
-
 def compute_bbox(points):
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
@@ -39,17 +34,11 @@ def compute_bbox(points):
 def parse_strokes_endpoint():
     try:
         payload = request.get_json(force=True)
-
-        # If Make sends a list, unwrap it
         if isinstance(payload, list):
-            if len(payload) == 0:
+            if not payload:
                 return jsonify({"error": "Empty list received"}), 400
             payload = payload[0]
 
-        if not isinstance(payload, dict):
-            return jsonify({"error": "Invalid JSON format"}), 400
-
-        # Pydantic validation
         req = ParseRequest(**payload)
 
         symbols = []
@@ -84,7 +73,7 @@ def compile_tex():
         latex_b64 = data.get("latex_base64", "")
 
         if not latex_b64:
-            return jsonify({"error": "Missing 'latex_base64' in request."}), 400
+            return jsonify({"error": "Missing 'latex_base64'"}), 400
 
         with tempfile.TemporaryDirectory() as tmp:
             tex_path = os.path.join(tmp, "doc.tex")
@@ -108,21 +97,17 @@ def compile_tex():
                         latex_log = log.read()
                     return jsonify({"error": "LaTeX compilation failed", "log": latex_log}), 500
                 else:
-                    return jsonify({"error": "pdflatex failed", "details": result.stderr.decode()}), 500
+                    return jsonify({"error": "pdflatex failed"}), 500
 
             subprocess.run(
                 ["pdftoppm", "-png", "-singlefile", "-r", "300", pdf_path, png_path],
                 check=True
             )
 
-            with open(pdf_path, "rb") as f:
-                pdf_b64 = base64.b64encode(f.read()).decode()
-
-            with open(png_path + ".png", "rb") as f:
-                png_b64 = base64.b64encode(f.read()).decode()
+            pdf_b64 = base64.b64encode(open(pdf_path, "rb").read()).decode()
+            png_b64 = base64.b64encode(open(png_path + ".png", "rb").read()).decode()
 
             os.makedirs("static", exist_ok=True)
-
             for f in glob.glob("static/exercise_*.png"):
                 try:
                     if time.time() - os.path.getmtime(f) > 3600:
@@ -131,9 +116,7 @@ def compile_tex():
                     pass
 
             unique_id = uuid.uuid4().hex[:8]
-            output_filename = f"exercise_{unique_id}.png"
-            output_path = os.path.join("static", output_filename)
-
+            output_path = os.path.join("static", f"exercise_{unique_id}.png")
             with open(output_path, "wb") as f:
                 f.write(base64.b64decode(png_b64))
 
@@ -156,11 +139,11 @@ def compile_tex():
 def upload():
     try:
         data = request.get_json(force=True)
-        file_b64 = data.get("base64", "")
+        file_b64 = data.get("base64")
         filename = data.get("filename", "uploaded.png")
 
         if not file_b64:
-            return jsonify({"error": "Missing 'base64' in request."}), 400
+            return jsonify({"error": "Missing 'base64'"}), 400
 
         if file_b64.startswith("data:image"):
             file_b64 = file_b64.split(",")[1]
@@ -171,37 +154,28 @@ def upload():
         with open(file_path, "wb") as f:
             f.write(base64.b64decode(file_b64))
 
-        url = f"https://{request.host}/{file_path}"
-        return jsonify({"url": url})
+        return jsonify({"url": f"https://{request.host}/{file_path}"})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 # ==========================================================
-# 5. RAG: Retrieve Past Paper Examples
+# 4. RAG RETRIEVAL
 # ==========================================================
-from openai import OpenAI
-from chromadb import Client
-from chromadb.config import Settings
+from chromadb import PersistentClient
 
+# Load API key
 from openai import OpenAI
-import os
-
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+# Load vector store
+chroma_client = PersistentClient(path="ib_store")
 
-# Init ChromaDB with safe production settings
-chroma_client = Client(Settings(
-    chroma_db_impl="duckdb+parquet",
-    persist_directory="ib_store",
-    anonymized_telemetry=False
-))
-
-# Load or create collection
 try:
     collection = chroma_client.get_collection("ib_questions")
-except:
+except Exception:
+    print("⚠️ Collection not found — creating an empty one.")
     collection = chroma_client.create_collection("ib_questions")
 
 @app.route("/retrieve", methods=["POST"])
@@ -209,49 +183,36 @@ def retrieve():
     try:
         data = request.get_json(force=True)
         topic = data.get("topic")
-        archetype_description = data.get("archetype_description")
-        k = data.get("k", 3)
+        archetype = data.get("archetype_description")
+        k = int(data.get("k", 3))
 
-        if not topic or not archetype_description:
+        if not topic or not archetype:
             return jsonify({"error": "Missing topic or archetype_description"}), 400
 
-        query_text = f"Topic: {topic}\nSkill: {archetype_description}"
+        query_text = f"Topic: {topic}\nSkill: {archetype}"
 
-        # Create embedding
         emb = client.embeddings.create(
             model="text-embedding-3-large",
             input=query_text
         ).data[0].embedding
 
-        # Query vector store
         results = collection.query(
             query_embeddings=[emb],
-            n_results=int(k),
+            n_results=k,
             where={"topic": topic}
         )
 
-        documents = results.get("documents", [[]])[0]
+        docs = results.get("documents", [[]])[0]
         ids = results.get("ids", [[]])[0]
 
-        out = []
-        for doc, qid in zip(documents, ids):
-            out.append({
-                "id": qid,
-                "text": doc
-            })
-
-        return jsonify({"examples": out})
+        return jsonify({"examples": [{"id": i, "text": d} for i, d in zip(ids, docs)]})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-
-
-
-
 # ==========================================================
-# 4. START SERVER
+# 5. START SERVER
 # ==========================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
