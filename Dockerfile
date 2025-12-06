@@ -1,9 +1,9 @@
 FROM python:3.11-slim
 
 # 1. Instalar dependencias del sistema
-# - build-essential: Necesario para compilar dependencias de ChromaDB
-# - texlive-science: CRUCIAL para el paquete 'siunitx' (unidades físicas)
-# - ghostscript: Ayuda en la renderización de fuentes PDF a Imagen
+# AGREGADO: 'lmodern' para corregir tu error de fuentes.
+# AGREGADO: 'texlive-fonts-extra' opcional por si pides fuentes raras, 
+# pero 'lmodern' es la clave aquí.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -14,6 +14,7 @@ RUN apt-get update && \
     texlive-pictures \
     texlive-fonts-recommended \
     texlive-science \
+    lmodern \
     poppler-utils \
     ghostscript && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -21,8 +22,7 @@ RUN apt-get update && \
 # 2. Configurar directorio de trabajo
 WORKDIR /app
 
-# 3. Copiar requirements (o instalar directos)
-# Se recomienda crear un requirements.txt, pero aquí lo hacemos directo para simplicidad
+# 3. Instalar librerías de Python
 RUN pip install --no-cache-dir \
     flask \
     pydantic==2.5.2 \
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir \
     openai \
     uvicorn
 
-# 4. Copiar todo el código (incluyendo la carpeta ib_store si existe localmente)
+# 4. Copiar todo el código
 COPY . /app
 
 # 5. Exponer el puerto
