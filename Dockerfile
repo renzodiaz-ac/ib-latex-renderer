@@ -1,30 +1,40 @@
 FROM python:3.11-slim
 
-# Install system dependencies (LaTeX + poppler for PDF to PNG)
+# 1. Instalar dependencias del sistema
+# - build-essential: Necesario para compilar dependencias de ChromaDB
+# - texlive-science: CRUCIAL para el paquete 'siunitx' (unidades físicas)
+# - ghostscript: Ayuda en la renderización de fuentes PDF a Imagen
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    texlive-latex-base texlive-latex-recommended texlive-latex-extra \
-    texlive-pictures texlive-fonts-recommended poppler-utils && \
+    build-essential \
+    python3-dev \
+    texlive-latex-base \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    texlive-pictures \
+    texlive-fonts-recommended \
+    texlive-science \
+    poppler-utils \
+    ghostscript && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# 2. Configurar directorio de trabajo
+WORKDIR /app
+
+# 3. Copiar requirements (o instalar directos)
+# Se recomienda crear un requirements.txt, pero aquí lo hacemos directo para simplicidad
 RUN pip install --no-cache-dir \
     flask \
     pydantic==2.5.2 \
     chromadb \
-    openai
+    openai \
+    uvicorn
 
-RUN pip install uvicorn
-
-
-# Set working directory
-WORKDIR /app
-
-# Copy all sources (including your ib_store vector DB)
+# 4. Copiar todo el código (incluyendo la carpeta ib_store si existe localmente)
 COPY . /app
 
-# Expose port for Render
+# 5. Exponer el puerto
 EXPOSE 8080
 
-# Start Flask app
+# 6. Comando de inicio
 CMD ["python", "app.py"]

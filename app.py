@@ -1,9 +1,31 @@
+import os
+import time
+import uuid
+import glob
+import base64
+import tempfile
+import subprocess
+import re
 from flask import Flask, request, jsonify
-import tempfile, subprocess, os, base64, uuid, time, glob
 from pydantic import BaseModel
 from typing import List
 
+# Inicializar Flask
 app = Flask(__name__)
+
+# ==========================================================
+# 0. UTILIDADES DE LIMPIEZA LATEX
+# ==========================================================
+def sanitize_latex(latex_code):
+    """
+    Elimina paquetes problemáticos que la IA suele alucinar
+    y que rompen la compilación en servidores Docker mínimos.
+    """
+    # 1. Eliminar microtype (causa n.1 de errores en Docker)
+    latex_code = re.sub(r'\\usepackage(\[.*\])?\{microtype\}', '', latex_code)
+    # 2. Eliminar tcolorbox si no lo soportas (opcional, tu docker lo tiene, pero a veces falla)
+    # latex_code = re.sub(r'\\usepackage(\[.*\])?\{tcolorbox\}', '', latex_code)
+    return latex_code
 
 # ==========================================================
 # 1. VECTOR PARSER (Strokes → Geometry)
@@ -26,6 +48,7 @@ class Symbol(BaseModel):
     points: List[List[float]]
 
 def compute_bbox(points):
+    if not points: return [0,0,0,0]
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     return [min(xs), min(ys), max(xs), max(ys)]
@@ -33,6 +56,7 @@ def compute_bbox(points):
 @app.post("/parse_strokes")
 def parse_strokes_endpoint():
     try:
+        # force=True permite leer JSON aunque el header esté mal
         payload = request.get_json(force=True)
         if isinstance(payload, list):
             if not payload:
@@ -45,9 +69,7 @@ def parse_strokes_endpoint():
         for el in req.elements:
             if not el.points:
                 continue
-
             bbox = compute_bbox(el.points)
-
             symbols.append(Symbol(
                 id=el.id,
                 bbox=bbox,
@@ -64,7 +86,7 @@ def parse_strokes_endpoint():
 
 
 # ==========================================================
-# 2. COMPILE LATEX
+# 2. COMPILE LATEX (ROBUSTO)
 # ==========================================================
 @app.route("/compile", methods=["POST"])
 def compile_tex():
@@ -75,56 +97,91 @@ def compile_tex():
         if not latex_b64:
             return jsonify({"error": "Missing 'latex_base64'"}), 400
 
+        # Decodificar y SANITIZAR el código LaTeX
+        raw_latex = base64.b64decode(latex_b64).decode('utf-8')
+        clean_latex = sanitize_latex(raw_latex)
+        
+        # Volver a bytes para escribir el archivo
+        latex_bytes = clean_latex.encode('utf-8')
+
         with tempfile.TemporaryDirectory() as tmp:
             tex_path = os.path.join(tmp, "doc.tex")
             pdf_path = os.path.join(tmp, "doc.pdf")
-            png_path = os.path.join(tmp, "doc")
+            png_prefix = os.path.join(tmp, "doc")
 
+            # Escribir el archivo .tex
             with open(tex_path, "wb") as f:
-                f.write(base64.b64decode(latex_b64))
+                f.write(latex_bytes)
 
-            result = subprocess.run(
-                ["pdflatex", "-interaction=nonstopmode", tex_path],
-                cwd=tmp,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            # 1. Ejecutar PDFLATEX con TIMEOUT
+            try:
+                process = subprocess.run(
+                    ["pdflatex", "-interaction=nonstopmode", "doc.tex"],
+                    cwd=tmp,  # Ejecutar DENTRO del temp para que los logs queden ahí
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=15  # Matar si tarda más de 15s
+                )
+            except subprocess.TimeoutExpired:
+                return jsonify({"error": "Compilation timed out (infinite loop in LaTeX)"}), 408
 
-            if result.returncode != 0:
+            # Verificar errores de LaTeX
+            if process.returncode != 0:
                 log_file = os.path.join(tmp, "doc.log")
+                latex_log = "Log not found."
                 if os.path.exists(log_file):
-                    with open(log_file, "r", encoding="utf-8", errors="ignore") as log:
+                    # Latin-1 es necesario porque los logs de error de LaTeX suelen tener caracteres raros
+                    with open(log_file, "r", encoding="latin-1", errors="replace") as log:
                         latex_log = log.read()
-                    return jsonify({"error": "LaTeX compilation failed", "log": latex_log}), 500
-                else:
-                    return jsonify({"error": "pdflatex failed"}), 500
+                
+                # Devolver el log truncado para no saturar la respuesta
+                return jsonify({"error": "LaTeX compilation failed", "log": latex_log[-2000:]}), 400
 
-            subprocess.run(
-                ["pdftoppm", "-png", "-singlefile", "-r", "300", pdf_path, png_path],
-                check=True
-            )
+            # 2. Ejecutar PDFTOPPM (Convertir PDF a PNG)
+            try:
+                subprocess.run(
+                    ["pdftoppm", "-png", "-singlefile", "-r", "300", "doc.pdf", "doc"],
+                    cwd=tmp,
+                    check=True,
+                    timeout=15
+                )
+            except subprocess.CalledProcessError:
+                return jsonify({"error": "Failed to convert PDF to Image"}), 500
 
-            pdf_b64 = base64.b64encode(open(pdf_path, "rb").read()).decode()
-            png_b64 = base64.b64encode(open(png_path + ".png", "rb").read()).decode()
+            # Leer resultado
+            generated_png = png_prefix + ".png"
+            if not os.path.exists(generated_png):
+                 return jsonify({"error": "PNG file was not generated"}), 500
 
+            pdf_b64_out = base64.b64encode(open(pdf_path, "rb").read()).decode()
+            png_b64_out = base64.b64encode(open(generated_png, "rb").read()).decode()
+
+            # Guardar en static para acceso público (limpieza automática simple)
             os.makedirs("static", exist_ok=True)
+            
+            # Limpiar archivos viejos (> 1 hora)
+            now = time.time()
             for f in glob.glob("static/exercise_*.png"):
                 try:
-                    if time.time() - os.path.getmtime(f) > 3600:
+                    if now - os.path.getmtime(f) > 3600:
                         os.remove(f)
-                except:
-                    pass
+                except: pass
 
             unique_id = uuid.uuid4().hex[:8]
-            output_path = os.path.join("static", f"exercise_{unique_id}.png")
+            output_filename = f"exercise_{unique_id}.png"
+            output_path = os.path.join("static", output_filename)
+            
             with open(output_path, "wb") as f:
-                f.write(base64.b64decode(png_b64))
+                f.write(base64.b64decode(png_b64_out))
 
-            png_url = f"https://{request.host}/{output_path}"
+            # Construir URL pública
+            # Nota: En Render, request.host suele ser correcto, pero si usas HTTPS asegúrate de que el esquema sea https
+            scheme = "https" if request.is_secure or request.headers.get("X-Forwarded-Proto") == "https" else "http"
+            png_url = f"{scheme}://{request.host}/static/{output_filename}"
 
             return jsonify({
-                "pdf_base64": pdf_b64,
-                "png_base64": png_b64,
+                "pdf_base64": pdf_b64_out,
+                "png_base64": png_b64_out,
                 "png_url": png_url
             })
 
@@ -145,7 +202,7 @@ def upload():
         if not file_b64:
             return jsonify({"error": "Missing 'base64'"}), 400
 
-        if file_b64.startswith("data:image"):
+        if "," in file_b64:
             file_b64 = file_b64.split(",")[1]
 
         os.makedirs("static", exist_ok=True)
@@ -153,52 +210,60 @@ def upload():
 
         with open(file_path, "wb") as f:
             f.write(base64.b64decode(file_b64))
-
-        return jsonify({"url": f"https://{request.host}/{file_path}"})
+        
+        scheme = "https" if request.is_secure or request.headers.get("X-Forwarded-Proto") == "https" else "http"
+        return jsonify({"url": f"{scheme}://{request.host}/static/{filename}"})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 # ==========================================================
-# 4. RAG RETRIEVAL
+# 4. RAG RETRIEVAL (Robust Chroma Load)
 # ==========================================================
 from chromadb import PersistentClient
-
-# Load API key
 from openai import OpenAI
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# Load vector store
-chroma_client = PersistentClient(path="ib_store")
+# Configuración segura de clientes
+client = None
+collection = None
 
-try:
-    collection = chroma_client.get_collection("ib_questions")
-except Exception:
-    print("⚠️ Collection not found — creating an empty one.")
-    collection = chroma_client.create_collection("ib_questions")
+# Intentar inicializar solo si hay API KEY
+if os.environ.get("OPENAI_API_KEY"):
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    
+    # Inicializar ChromaDB
+    # Asegúrate de que la carpeta 'ib_store' se haya copiado con el COPY . /app del Dockerfile
+    db_path = os.path.join(os.getcwd(), "ib_store")
+    chroma_client = PersistentClient(path=db_path)
+    
+    try:
+        # Intentar obtener o crear la colección silenciosamente
+        collection = chroma_client.get_or_create_collection("ib_questions")
+    except Exception as e:
+        print(f"⚠️ ChromaDB Warning: {e}")
 
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
     try:
+        if not client or not collection:
+            return jsonify({"error": "OpenAI or ChromaDB not initialized (Check API Key/DB path)"}), 500
+
         data = request.get_json(force=True)
         topic = data.get("topic")
         archetype_description = data.get("archetype_description")
         k = int(data.get("k", 3))
 
-        if not topic or not archetype_description:
-            return jsonify({"error": "Missing topic or archetype_description"}), 400
+        if not topic:
+            return jsonify({"error": "Missing topic"}), 400
 
-        # Create semantic query
-        query_text = f"Topic: {topic}\nSkill: {archetype_description}"
+        query_text = f"Topic: {topic}\nSkill: {archetype_description or ''}"
 
-        # Create embedding
         emb = client.embeddings.create(
             model="text-embedding-3-large",
             input=query_text
         ).data[0].embedding
 
-        # ❗️SEMANTIC SEARCH ONLY – NO EXACT MATCH FILTER
         results = collection.query(
             query_embeddings=[emb],
             n_results=k
@@ -220,9 +285,10 @@ def retrieve():
         return jsonify({"error": str(e)}), 500
 
 
-
 # ==========================================================
 # 5. START SERVER
 # ==========================================================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    # En Render, PORT viene como variable de entorno
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
