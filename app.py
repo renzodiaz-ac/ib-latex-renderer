@@ -182,13 +182,23 @@ def upload():
 # 5. RAG: Retrieve Past Paper Examples
 # ==========================================================
 from openai import OpenAI
-import chromadb
+from chromadb import Client
+from chromadb.config import Settings
 
 client = OpenAI()
 
-# Load persistent vector DB
-chroma_client = chromadb.PersistentClient(path="ib_store")
-collection = chroma_client.get_collection("ib_questions")
+# Init ChromaDB with safe production settings
+chroma_client = Client(Settings(
+    chroma_db_impl="duckdb+parquet",
+    persist_directory="ib_store",
+    anonymized_telemetry=False
+))
+
+# Load or create collection
+try:
+    collection = chroma_client.get_collection("ib_questions")
+except:
+    collection = chroma_client.create_collection("ib_questions")
 
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
@@ -212,12 +222,15 @@ def retrieve():
         # Query vector store
         results = collection.query(
             query_embeddings=[emb],
-            n_results=k,
+            n_results=int(k),
             where={"topic": topic}
         )
 
+        documents = results.get("documents", [[]])[0]
+        ids = results.get("ids", [[]])[0]
+
         out = []
-        for doc, qid in zip(results["documents"][0], results["ids"][0]):
+        for doc, qid in zip(documents, ids):
             out.append({
                 "id": qid,
                 "text": doc
@@ -227,6 +240,7 @@ def retrieve():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 

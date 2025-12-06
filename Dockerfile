@@ -10,9 +10,12 @@ RUN apt-get update && \
 # Install Python dependencies
 RUN pip install --no-cache-dir \
     flask \
-    pydantic==1.10.13 \
+    pydantic==2.5.2 \
     chromadb \
     openai
+
+RUN pip install uvicorn
+
 
 # Set working directory
 WORKDIR /app
