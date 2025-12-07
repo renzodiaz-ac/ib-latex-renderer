@@ -18,13 +18,22 @@ app = Flask(__name__)
 # ==========================================================
 def sanitize_latex(latex_code):
     """
-    Elimina paquetes problemáticos que la IA suele alucinar
-    y que rompen la compilación en servidores Docker mínimos.
+    Limpia alucinaciones comunes de la IA y corrige errores de sintaxis
+    antes de compilar.
     """
-    # 1. Eliminar microtype (causa n.1 de errores en Docker)
+    # 1. Eliminar paquetes conflictivos
     latex_code = re.sub(r'\\usepackage(\[.*\])?\{microtype\}', '', latex_code)
-    # 2. Eliminar tcolorbox si no lo soportas (opcional, tu docker lo tiene, pero a veces falla)
-    # latex_code = re.sub(r'\\usepackage(\[.*\])?\{tcolorbox\}', '', latex_code)
+    latex_code = re.sub(r'\\usepackage(\[.*\])?\{tcolorbox\}', '', latex_code)
+    
+    # 2. CORRECCIÓN DEL ERROR ACTUAL:
+    # La IA a veces escribe \\[ (salto de línea) en lugar de \[ (inicio de ecuación).
+    # Esta Regex busca "\\[" al inicio de una línea y lo cambia por "\["
+    latex_code = re.sub(r'^\s*\\\\\[', r'\\[', latex_code, flags=re.MULTILINE)
+    
+    # 3. Corrección de seguridad extra: Asegurar que \[ y \] estén balanceados
+    # Si hay un mezclador de \[ con salto de línea erróneo
+    latex_code = latex_code.replace(r'\\[ ', r'\[ ') 
+
     return latex_code
 
 # ==========================================================
