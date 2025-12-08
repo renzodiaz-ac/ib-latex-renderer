@@ -255,17 +255,56 @@ if os.environ.get("OPENAI_API_KEY"):
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
     try:
-        if not client or not collection:
-            return jsonify({"error": "OpenAI or ChromaDB not initialized (Check API Key/DB path)"}), 500
+        # 1. CONFIGURACIÓN DE MAPEO (Aquí controlas el futuro)
+        # Clave: Texto que debe estar en el nombre del programa (ej. "IB", "AQA")
+        # Valor: Nombre de la colección en ChromaDB (o None si aún no tienes DB para eso)
+        SYLLABUS_MAP = {
+            "IB": "ib_questions",   # Si dice IB-Math-AI-SL -> usa ib_questions
+            "AQA": None,            # Si dice AQA -> devuelve vacío (por ahora)
+            "CAMBRIDGE": None       # Ejemplo futuro
+        }
 
+        if not client:
+            print("⚠️ DB not initialized. Returning empty list.")
+            return jsonify({"examples": []})
+
+        # 2. OBTENER DATOS
         data = request.get_json(force=True)
         topic = data.get("topic")
         archetype_description = data.get("archetype_description")
+        
+        # Recibimos el valor exacto del webhook: "IB-Math-AI-SL"
+        program_raw = data.get("syllabus", "") 
         k = int(data.get("k", 3))
 
         if not topic:
             return jsonify({"error": "Missing topic"}), 400
 
+        # 3. LÓGICA DE SELECCIÓN DE COLECCIÓN
+        target_collection_name = None
+        
+        # Buscamos coincidencias parciales (case-insensitive)
+        # Ej: Si program_raw es "IB-Math-AI-SL", encuentra "IB" y asigna "ib_questions"
+        for key, col_name in SYLLABUS_MAP.items():
+            if key in program_raw.upper():
+                target_collection_name = col_name
+                break
+        
+        # 4. SAFETY CHECK: Si no hay colección asignada (caso AQA hoy), devolver vacío
+        if not target_collection_name:
+            print(f"ℹ️ No database found for program: {program_raw}. Skipping retrieval.")
+            return jsonify({"examples": []})
+
+        # Intentar cargar esa colección específica
+        try:
+            # Nota: Asegúrate de que `chroma_client` sea accesible aquí (global)
+            active_collection = chroma_client.get_collection(target_collection_name)
+        except Exception:
+            # Si la colección no existe físicamente en la DB aunque esté en el mapa
+            print(f"⚠️ Collection '{target_collection_name}' not found in DB.")
+            return jsonify({"examples": []})
+
+        # 5. BÚSQUEDA VECTORIAL (Solo si pasamos los filtros anteriores)
         query_text = f"Topic: {topic}\nSkill: {archetype_description or ''}"
 
         emb = client.embeddings.create(
@@ -273,7 +312,7 @@ def retrieve():
             input=query_text
         ).data[0].embedding
 
-        results = collection.query(
+        results = active_collection.query(
             query_embeddings=[emb],
             n_results=k
         )
@@ -291,7 +330,8 @@ def retrieve():
         return jsonify({"examples": out})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error in retrieve: {e}")
+        return jsonify({"examples": []})
 
 
 # ==========================================================
