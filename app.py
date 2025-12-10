@@ -6,6 +6,7 @@ import base64
 import tempfile
 import subprocess
 import re
+import random
 from flask import Flask, request, jsonify
 from pydantic import BaseModel
 from typing import List
@@ -228,7 +229,7 @@ def upload():
 
 
 # ==========================================================
-# 4. RAG RETRIEVAL (Robust Chroma Load)
+# 4. RAG RETRIEVAL (Robust Chroma Load + Randomized Logic)
 # ==========================================================
 from chromadb import PersistentClient
 from openai import OpenAI
@@ -237,12 +238,15 @@ from openai import OpenAI
 client = None
 collection = None
 
+# Constante para la "Ventana Estocástica"
+# Buscamos 15 candidatos para elegir 3 al azar.
+SEARCH_POOL_SIZE = 15  
+
 # Intentar inicializar solo si hay API KEY
 if os.environ.get("OPENAI_API_KEY"):
     client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     
     # Inicializar ChromaDB
-    # Asegúrate de que la carpeta 'ib_store' se haya copiado con el COPY . /app del Dockerfile
     db_path = os.path.join(os.getcwd(), "ib_store")
     chroma_client = PersistentClient(path=db_path)
     
@@ -255,13 +259,11 @@ if os.environ.get("OPENAI_API_KEY"):
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
     try:
-        # 1. CONFIGURACIÓN DE MAPEO (Aquí controlas el futuro)
-        # Clave: Texto que debe estar en el nombre del programa (ej. "IB", "AQA")
-        # Valor: Nombre de la colección en ChromaDB (o None si aún no tienes DB para eso)
+        # 1. CONFIGURACIÓN DE MAPEO
         SYLLABUS_MAP = {
-            "IB": "ib_questions",   # Si dice IB-Math-AI-SL -> usa ib_questions
-            "AQA": None,            # Si dice AQA -> devuelve vacío (por ahora)
-            "CAMBRIDGE": None       # Ejemplo futuro
+            "IB": "ib_questions",   
+            "AQA": None,            
+            "CAMBRIDGE": None       
         }
 
         if not client:
@@ -273,38 +275,30 @@ def retrieve():
         topic = data.get("topic")
         archetype_description = data.get("archetype_description")
         
-        # Recibimos el valor exacto del webhook: "IB-Math-AI-SL"
         program_raw = data.get("syllabus", "") 
-        k = int(data.get("k", 3))
+        k = int(data.get("k", 3)) # Cantidad final de ejemplos que la IA necesita
 
         if not topic:
             return jsonify({"error": "Missing topic"}), 400
 
         # 3. LÓGICA DE SELECCIÓN DE COLECCIÓN
         target_collection_name = None
-        
-        # Buscamos coincidencias parciales (case-insensitive)
-        # Ej: Si program_raw es "IB-Math-AI-SL", encuentra "IB" y asigna "ib_questions"
         for key, col_name in SYLLABUS_MAP.items():
             if key in program_raw.upper():
                 target_collection_name = col_name
                 break
         
-        # 4. SAFETY CHECK: Si no hay colección asignada (caso AQA hoy), devolver vacío
         if not target_collection_name:
             print(f"ℹ️ No database found for program: {program_raw}. Skipping retrieval.")
             return jsonify({"examples": []})
 
-        # Intentar cargar esa colección específica
         try:
-            # Nota: Asegúrate de que `chroma_client` sea accesible aquí (global)
             active_collection = chroma_client.get_collection(target_collection_name)
         except Exception:
-            # Si la colección no existe físicamente en la DB aunque esté en el mapa
             print(f"⚠️ Collection '{target_collection_name}' not found in DB.")
             return jsonify({"examples": []})
 
-        # 5. BÚSQUEDA VECTORIAL (Solo si pasamos los filtros anteriores)
+        # 4. BÚSQUEDA VECTORIAL (MODIFICADA: POOL GRANDE)
         query_text = f"Topic: {topic}\nSkill: {archetype_description or ''}"
 
         emb = client.embeddings.create(
@@ -312,27 +306,33 @@ def retrieve():
             input=query_text
         ).data[0].embedding
 
+        # --- CAMBIO CLAVE: Pedimos más resultados de los necesarios (POOL) ---
         results = active_collection.query(
             query_embeddings=[emb],
-            n_results=k
+            n_results=SEARCH_POOL_SIZE  # Traemos 15 candidatos, no k
         )
 
         documents = results.get("documents", [[]])[0]
         ids = results.get("ids", [[]])[0]
 
-        out = []
+        # 5. LÓGICA ESTOCÁSTICA (SHUFFLE & SLICE)
+        all_candidates = []
         for doc, qid in zip(documents, ids):
-            out.append({
+            all_candidates.append({
                 "id": qid,
                 "text": doc
             })
+        
+        # Si encontramos menos candidatos que el Pool, usamos lo que haya.
+        # Elegimos 'k' al azar de este grupo de candidatos relevantes.
+        num_to_select = min(k, len(all_candidates))
+        selected_examples = random.sample(all_candidates, num_to_select)
 
-        return jsonify({"examples": out})
+        return jsonify({"examples": selected_examples})
 
     except Exception as e:
         print(f"Error in retrieve: {e}")
         return jsonify({"examples": []})
-
 
 # ==========================================================
 # 5. START SERVER
