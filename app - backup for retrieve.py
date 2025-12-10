@@ -228,6 +228,111 @@ def upload():
         return jsonify({"error": str(e)}), 500
 
 
+# ==========================================================
+# 4. RAG RETRIEVAL (Robust Chroma Load + Randomized Logic)
+# ==========================================================
+from chromadb import PersistentClient
+from openai import OpenAI
+
+# Configuración segura de clientes
+client = None
+collection = None
+
+# Constante para la "Ventana Estocástica"
+# Buscamos 15 candidatos para elegir 3 al azar.
+SEARCH_POOL_SIZE = 15  
+
+# Intentar inicializar solo si hay API KEY
+if os.environ.get("OPENAI_API_KEY"):
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    
+    # Inicializar ChromaDB
+    db_path = os.path.join(os.getcwd(), "ib_store")
+    chroma_client = PersistentClient(path=db_path)
+    
+    try:
+        # Intentar obtener o crear la colección silenciosamente
+        collection = chroma_client.get_or_create_collection("ib_questions")
+    except Exception as e:
+        print(f"⚠️ ChromaDB Warning: {e}")
+
+@app.route("/retrieve", methods=["POST"])
+def retrieve():
+    try:
+        # 1. CONFIGURACIÓN DE MAPEO
+        SYLLABUS_MAP = {
+            "IB": "ib_questions",   
+            "AQA": None,            
+            "CAMBRIDGE": None       
+        }
+
+        if not client:
+            print("⚠️ DB not initialized. Returning empty list.")
+            return jsonify({"examples": []})
+
+        # 2. OBTENER DATOS
+        data = request.get_json(force=True)
+        topic = data.get("topic")
+        archetype_description = data.get("archetype_description")
+        
+        program_raw = data.get("syllabus", "") 
+        k = int(data.get("k", 3)) # Cantidad final de ejemplos que la IA necesita
+
+        if not topic:
+            return jsonify({"error": "Missing topic"}), 400
+
+        # 3. LÓGICA DE SELECCIÓN DE COLECCIÓN
+        target_collection_name = None
+        for key, col_name in SYLLABUS_MAP.items():
+            if key in program_raw.upper():
+                target_collection_name = col_name
+                break
+        
+        if not target_collection_name:
+            print(f"ℹ️ No database found for program: {program_raw}. Skipping retrieval.")
+            return jsonify({"examples": []})
+
+        try:
+            active_collection = chroma_client.get_collection(target_collection_name)
+        except Exception:
+            print(f"⚠️ Collection '{target_collection_name}' not found in DB.")
+            return jsonify({"examples": []})
+
+        # 4. BÚSQUEDA VECTORIAL (MODIFICADA: POOL GRANDE)
+        query_text = f"Topic: {topic}\nSkill: {archetype_description or ''}"
+
+        emb = client.embeddings.create(
+            model="text-embedding-3-large",
+            input=query_text
+        ).data[0].embedding
+
+        # --- CAMBIO CLAVE: Pedimos más resultados de los necesarios (POOL) ---
+        results = active_collection.query(
+            query_embeddings=[emb],
+            n_results=SEARCH_POOL_SIZE  # Traemos 15 candidatos, no k
+        )
+
+        documents = results.get("documents", [[]])[0]
+        ids = results.get("ids", [[]])[0]
+
+        # 5. LÓGICA ESTOCÁSTICA (SHUFFLE & SLICE)
+        all_candidates = []
+        for doc, qid in zip(documents, ids):
+            all_candidates.append({
+                "id": qid,
+                "text": doc
+            })
+        
+        # Si encontramos menos candidatos que el Pool, usamos lo que haya.
+        # Elegimos 'k' al azar de este grupo de candidatos relevantes.
+        num_to_select = min(k, len(all_candidates))
+        selected_examples = random.sample(all_candidates, num_to_select)
+
+        return jsonify({"examples": selected_examples})
+
+    except Exception as e:
+        print(f"Error in retrieve: {e}")
+        return jsonify({"examples": []})
 
 # ==========================================================
 # 5. START SERVER

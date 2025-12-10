@@ -26,6 +26,8 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     flask \
     pydantic==2.5.2 \
+    chromadb \
+    openai \
     uvicorn
 
 # 4. Copiar todo el código
