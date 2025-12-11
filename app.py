@@ -24,17 +24,26 @@ def sanitize_latex(latex_code):
     """
     # 1. Eliminar paquetes conflictivos
     latex_code = re.sub(r'\\usepackage(\[.*\])?\{microtype\}', '', latex_code)
-    latex_code = re.sub(r'\\usepackage(\[.*\])?\{tcolorbox\}', '', latex_code)
-    
-    # 2. CORRECCIÓN DEL ERROR ACTUAL:
-    # La IA a veces escribe \\[ (salto de línea) en lugar de \[ (inicio de ecuación).
-    # Esta Regex busca "\\[" al inicio de una línea y lo cambia por "\["
-    latex_code = re.sub(r'^\s*\\\\\[', r'\\[', latex_code, flags=re.MULTILINE)
-    
-    # 3. Corrección de seguridad extra: Asegurar que \[ y \] estén balanceados
-    # Si hay un mezclador de \[ con salto de línea erróneo
-    latex_code = latex_code.replace(r'\\[ ', r'\[ ') 
+    # latex_code = re.sub(r'\\usepackage(\[.*\])?\{tcolorbox\}', '', latex_code) # YA NO LO BORRES si lo usas en el template
 
+    # 2. CORRECCIÓN CRÍTICA: EL ERROR DE "MATH MODE" vs "ESPACIO VERTICAL"
+    # La IA escribe \[2mm] pensando que es espacio. LaTeX cree que es una ecuación.
+    # Buscamos \[ seguido de dígitos y unidades (mm, cm, pt, ex, em) y cerramos el corchete
+    # Reemplazamos \[2mm] por \\[2mm]
+    latex_code = re.sub(r'\\\[\s*(\d+[a-z]{2})\]', r'\\\\[\1]', latex_code)
+
+    # 3. Corrección de saltos de línea mal formados al inicio
+    latex_code = re.sub(r'^\s*\\\\\[', r'\\[', latex_code, flags=re.MULTILINE)
+
+    # 4. Corrección de formas geométricas (Diamantes -> Círculos)
+    latex_code = latex_code.replace(", diamond", ", circle")
+    latex_code = latex_code.replace("diamond,", "circle,")
+    latex_code = latex_code.replace("[diamond]", "[circle]")
+
+    # 5. Desempaquetado de seguridad (Solo si la caja está duplicada o mal formada)
+    # Si ves que tienes \begin{tcolorbox} dentro de otro, habilita esto. 
+    # Por ahora, con el template fijo, déjalo comentado o úsalo solo para limpiar "inner boxes".
+    
     return latex_code
 
 # ==========================================================
